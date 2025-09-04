@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Fact Checker
  * Description: AI-powered fact-checking plugin that verifies article accuracy using OpenRouter with web search
- * Version: 2.0.0
+ * Version: 2.0.2
  * Author: Mohamed Sawah
  * Author URI: https://sawahsolutions.com
  * License: GPL v2 or later
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('FACT_CHECKER_VERSION', '2.0.0');
+define('FACT_CHECKER_VERSION', '2.0.2');
 define('FACT_CHECKER_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('FACT_CHECKER_PLUGIN_PATH', plugin_dir_path(__FILE__));
 
@@ -40,7 +40,7 @@ class FactChecker {
     }
     
     public function init() {
-        $this->options = get_option('fact_checker_options', array(
+        $default_options = array(
             'enabled' => true,
             'api_key' => '',
             'model' => 'openai/gpt-4',
@@ -51,7 +51,15 @@ class FactChecker {
             'success_color' => '#059669',
             'warning_color' => '#f59e0b',
             'background_color' => '#f8fafc'
-        ));
+        );
+        
+        $saved_options = get_option('fact_checker_options', array());
+        $this->options = array_merge($default_options, $saved_options);
+        
+        // Update the options in database if new defaults were added
+        if (count($this->options) > count($saved_options)) {
+            update_option('fact_checker_options', $this->options);
+        }
     }
     
     public function activate() {
@@ -143,7 +151,7 @@ class FactChecker {
                         </div>
                         <h3>Fact Checker</h3>
                     </div>
-                    <button class="check-button" onclick="factCheckerStart()">
+                    <button class="check-button">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path>
                         </svg>

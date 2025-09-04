@@ -1,27 +1,96 @@
 jQuery(document).ready(function ($) {
   "use strict";
 
-  // Set CSS custom properties for colors and apply theme
-  if (typeof factChecker !== "undefined" && factChecker.colors) {
-    const root = document.documentElement;
-    root.style.setProperty("--fc-primary", factChecker.colors.primary);
-    root.style.setProperty("--fc-success", factChecker.colors.success);
-    root.style.setProperty("--fc-warning", factChecker.colors.warning);
-    root.style.setProperty("--fc-background", factChecker.colors.background);
+  // Cache for storing results per post ID to handle autoload
+  let factCheckCache = {};
+  let activeRequests = {};
 
-    // Apply theme mode
-    if (factChecker.theme_mode === "dark") {
-      $(".fact-check-container").addClass("theme-dark");
+  // Initialize the fact checker (called on page load and autoload)
+  function initFactChecker() {
+    // Set CSS custom properties for colors and apply theme
+    if (typeof factChecker !== "undefined" && factChecker.colors) {
+      const root = document.documentElement;
+      root.style.setProperty("--fc-primary", factChecker.colors.primary);
+      root.style.setProperty("--fc-success", factChecker.colors.success);
+      root.style.setProperty("--fc-warning", factChecker.colors.warning);
+      root.style.setProperty("--fc-background", factChecker.colors.background);
+
+      // Apply theme mode to all fact check containers
+      $(".fact-check-container").removeClass("theme-dark theme-light");
+      if (factChecker.theme_mode === "dark") {
+        $(".fact-check-container").addClass("theme-dark");
+      } else {
+        $(".fact-check-container").addClass("theme-light");
+      }
     }
+
+    // Clear any existing results that might be showing incorrect data
+    $(".fact-check-container").each(function () {
+      const container = $(this);
+      const postId = container.data("post-id");
+      const resultsContainer = container.find("#fact-check-results");
+      const button = container.find(".check-button");
+
+      // Reset button state
+      button.removeClass("loading");
+      button.html(
+        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path></svg><span>Check Facts</span>'
+      );
+
+      // Clear results unless they belong to current post
+      if (postId && factCheckCache[postId]) {
+        displayResults(factCheckCache[postId], resultsContainer);
+        resultsContainer.show();
+      } else {
+        resultsContainer.hide().empty();
+      }
+    });
   }
 
-  window.factCheckerStart = function () {
-    const container = $(".fact-check-container");
+  // Initialize on page load
+  initFactChecker();
+
+  // Re-initialize when new content is loaded (autoload compatibility)
+  $(document).on("DOMNodeInserted", function (e) {
+    if (
+      $(e.target).find(".fact-check-container").length > 0 ||
+      $(e.target).hasClass("fact-check-container")
+    ) {
+      setTimeout(initFactChecker, 100);
+    }
+  });
+
+  // Listen for common autoload events
+  $(document).on("autoload:complete page:change content:loaded", function () {
+    setTimeout(initFactChecker, 100);
+  });
+
+  // Global fact checker function
+  window.factCheckerStart = function (element) {
+    // Find the closest fact-check-container
+    const container = element
+      ? $(element).closest(".fact-check-container")
+      : $(".fact-check-container").first();
     const button = container.find(".check-button");
     const resultsContainer = container.find("#fact-check-results");
     const postId = container.data("post-id");
 
-    if (button.hasClass("loading")) {
+    if (!postId) {
+      showError(
+        "Unable to identify article. Please refresh the page.",
+        resultsContainer
+      );
+      return;
+    }
+
+    if (button.hasClass("loading") || activeRequests[postId]) {
+      return;
+    }
+
+    // Check if we have cached results for this specific post
+    if (factCheckCache[postId]) {
+      displayResults(factCheckCache[postId], resultsContainer);
+      resultsContainer.show();
       return;
     }
 
@@ -32,8 +101,13 @@ jQuery(document).ready(function ($) {
     );
     resultsContainer.hide();
 
+    // Cancel any existing request for this post
+    if (activeRequests[postId]) {
+      activeRequests[postId].abort();
+    }
+
     // Make AJAX request with extended timeout for web search
-    $.ajax({
+    activeRequests[postId] = $.ajax({
       url: factChecker.ajaxUrl,
       type: "POST",
       data: {
@@ -44,6 +118,8 @@ jQuery(document).ready(function ($) {
       timeout: 180000, // 3 minutes timeout for comprehensive web search
       success: function (response) {
         if (response.success) {
+          // Cache the results for this specific post
+          factCheckCache[postId] = response.data;
           displayResults(response.data, resultsContainer);
           resultsContainer.show();
         } else {
@@ -54,6 +130,10 @@ jQuery(document).ready(function ($) {
         }
       },
       error: function (xhr, status, error) {
+        if (status === "abort") {
+          return; // Request was cancelled
+        }
+
         let errorMessage = "Analysis failed. Please try again.";
         if (status === "timeout") {
           errorMessage =
@@ -64,14 +144,23 @@ jQuery(document).ready(function ($) {
         showError(errorMessage, resultsContainer);
       },
       complete: function () {
-        // Reset button
+        // Reset button state
         button.removeClass("loading");
         button.html(
           '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg><span>Re-check</span>'
         );
+
+        // Clear active request
+        delete activeRequests[postId];
       },
     });
   };
+
+  // Update the HTML template to pass the container element
+  $(document).on("click", ".check-button", function (e) {
+    e.preventDefault();
+    factCheckerStart(this);
+  });
 
   function displayResults(data, container) {
     const now = new Date();
