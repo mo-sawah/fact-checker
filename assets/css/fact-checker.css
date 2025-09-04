@@ -461,7 +461,7 @@
   color: #374151 !important;
 }
 
-.progress-bar {
+.fact-check-box .progress-bar {
   width: 60px !important;
   height: 3px !important;
   background: #e5e7eb !important;
