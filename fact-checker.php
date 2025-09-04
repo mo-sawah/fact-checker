@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Fact Checker
  * Description: AI-powered fact-checking plugin that verifies article accuracy using OpenRouter and web searches
- * Version: 1.0.1
+ * Version: 1.0.2
  * Author: Mohamed Sawah
  * Author URI: https://sawahsolutions.com
  * License: GPL v2 or later
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('FACT_CHECKER_VERSION', '1.0.1');
+define('FACT_CHECKER_VERSION', '1.0.2');
 define('FACT_CHECKER_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('FACT_CHECKER_PLUGIN_PATH', plugin_dir_path(__FILE__));
 
