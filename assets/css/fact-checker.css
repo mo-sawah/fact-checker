@@ -2,6 +2,7 @@
 /* Import Google Fonts to ensure consistency */
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
 
+/* Light Theme (Default) */
 .fact-check-container {
   font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
     "Helvetica Neue", Arial, sans-serif !important;
@@ -31,6 +32,103 @@
 
 .fact-check-box:hover {
   border-color: #cbd5e1 !important;
+}
+
+/* Dark Theme */
+.fact-check-container.theme-dark {
+  color: #e2e8f0 !important;
+}
+
+.fact-check-container.theme-dark .fact-check-box {
+  background: #1e293b !important;
+  border: 1px solid #334155 !important;
+}
+
+.fact-check-container.theme-dark .fact-check-box:hover {
+  border-color: #475569 !important;
+}
+
+.fact-check-container.theme-dark .fact-check-title h3 {
+  color: #f1f5f9 !important;
+}
+
+.fact-check-container.theme-dark .fact-check-description {
+  color: #94a3b8 !important;
+}
+
+.fact-check-container.theme-dark .score-section {
+  background: #0f172a !important;
+  border: 1px solid #334155 !important;
+}
+
+.fact-check-container.theme-dark .score-title {
+  color: #f1f5f9 !important;
+}
+
+.fact-check-container.theme-dark .score-subtitle {
+  color: #94a3b8 !important;
+}
+
+.fact-check-container.theme-dark .score-label {
+  color: #94a3b8 !important;
+}
+
+.fact-check-container.theme-dark .issues-title {
+  color: #f1f5f9 !important;
+}
+
+.fact-check-container.theme-dark .issue-item {
+  background: #0f172a !important;
+  border: 1px solid var(--fc-warning, #fbbf24) !important;
+  border-left: 4px solid var(--fc-warning, #fbbf24) !important;
+}
+
+.fact-check-container.theme-dark .issue-description {
+  color: #cbd5e1 !important;
+}
+
+.fact-check-container.theme-dark .issue-suggestion {
+  color: #94a3b8 !important;
+  background: #1e293b !important;
+  border-left: 3px solid #334155 !important;
+}
+
+.fact-check-container.theme-dark .issue-suggestion strong {
+  color: #e2e8f0 !important;
+}
+
+.fact-check-container.theme-dark .sources-title {
+  color: #f1f5f9 !important;
+}
+
+.fact-check-container.theme-dark .source-link {
+  color: var(--fc-primary, #60a5fa) !important;
+}
+
+.fact-check-container.theme-dark .source-link:hover {
+  color: #93c5fd !important;
+}
+
+.fact-check-container.theme-dark .voicing-info {
+  color: #94a3b8 !important;
+  border-top: 1px solid #334155 !important;
+}
+
+.fact-check-container.theme-dark .voice-control {
+  color: #94a3b8 !important;
+}
+
+.fact-check-container.theme-dark .voice-control:hover {
+  background: #334155 !important;
+  color: #cbd5e1 !important;
+}
+
+.fact-check-container.theme-dark .progress-bar {
+  background: #334155 !important;
+}
+
+.fact-check-container.theme-dark .sources-section {
+  border-top: 1px solid #334155 !important;
 }
 
 .fact-check-header {
@@ -332,7 +430,9 @@
   justify-content: space-between !important;
   font-size: 12px !important;
   color: #6b7280 !important;
-  margin-top: 12px !important;
+  margin-top: 16px !important;
+  padding-top: 16px !important;
+  border-top: 1px solid #f3f4f6 !important;
   flex-wrap: wrap !important;
   gap: 12px !important;
   margin-bottom: 0 !important;
@@ -374,4 +474,70 @@
   background: var(--fc-primary, #3b82f6) !important;
   width: 25% !important;
   transition: width 0.3s ease !important;
+}
+
+/* Timestamp Styling - Match the UI design */
+.fact-check-timestamp {
+  text-align: center !important;
+  color: #9ca3af !important;
+  font-size: 12px !important;
+  margin-top: 16px !important;
+  padding-top: 16px !important;
+  border-top: 1px solid #f3f4f6 !important;
+  font-weight: 400 !important;
+  letter-spacing: 0.025em !important;
+}
+
+.fact-check-container.theme-dark .fact-check-timestamp {
+  color: #64748b !important;
+  border-top: 1px solid #334155 !important;
+}
+
+/* Dark theme status indicators */
+.fact-check-container.theme-dark .status-good {
+  background: rgba(34, 197, 94, 0.2) !important;
+  color: #4ade80 !important;
+}
+
+.fact-check-container.theme-dark .status-warning {
+  background: rgba(251, 191, 36, 0.2) !important;
+  color: #fbbf24 !important;
+}
+
+.fact-check-container.theme-dark .status-error {
+  background: rgba(239, 68, 68, 0.2) !important;
+  color: #f87171 !important;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .fact-check-container {
+    margin: 20px 0 !important;
+  }
+
+  .fact-check-box {
+    padding: 20px !important;
+  }
+
+  .fact-check-header {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 16px !important;
+  }
+
+  .score-section {
+    flex-direction: column !important;
+    text-align: center !important;
+  }
+
+  .score-description {
+    padding-left: 0 !important;
+    margin-top: 16px !important;
+  }
+
+  .voicing-info {
+    flex-direction: column !important;
+    gap: 8px !important;
+    text-align: center !important;
+  }
 }

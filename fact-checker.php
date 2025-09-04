@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: Fact Checker
- * Description: AI-powered fact-checking plugin that verifies article accuracy using OpenRouter and web searches
- * Version: 1.0.3
+ * Description: AI-powered fact-checking plugin that verifies article accuracy using OpenRouter with web search
+ * Version: 2.0.0
  * Author: Mohamed Sawah
  * Author URI: https://sawahsolutions.com
  * License: GPL v2 or later
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('FACT_CHECKER_VERSION', '1.0.3');
+define('FACT_CHECKER_VERSION', '2.0.0');
 define('FACT_CHECKER_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('FACT_CHECKER_PLUGIN_PATH', plugin_dir_path(__FILE__));
 
@@ -28,8 +28,10 @@ class FactChecker {
         add_action('admin_menu', array($this, 'add_admin_menu'));
         add_action('admin_init', array($this, 'settings_init'));
         add_action('wp_enqueue_scripts', array($this, 'enqueue_scripts'));
+        add_action('admin_enqueue_scripts', array($this, 'admin_enqueue_scripts'));
         add_action('wp_ajax_fact_check_article', array($this, 'ajax_fact_check'));
         add_action('wp_ajax_nopriv_fact_check_article', array($this, 'ajax_fact_check'));
+        add_action('wp_ajax_test_fact_checker_api', array($this, 'ajax_test_api'));
         
         // Add fact checker to content
         add_filter('the_content', array($this, 'add_fact_checker_to_content'));
@@ -43,6 +45,8 @@ class FactChecker {
             'api_key' => '',
             'model' => 'openai/gpt-4',
             'web_searches' => 5,
+            'search_context' => 'medium',
+            'theme_mode' => 'light',
             'primary_color' => '#3b82f6',
             'success_color' => '#059669',
             'warning_color' => '#f59e0b',
@@ -92,6 +96,7 @@ class FactChecker {
             wp_localize_script('fact-checker-script', 'factChecker', array(
                 'ajaxUrl' => admin_url('admin-ajax.php'),
                 'nonce' => wp_create_nonce('fact_checker_nonce'),
+                'theme_mode' => $this->options['theme_mode'],
                 'colors' => array(
                     'primary' => $this->options['primary_color'],
                     'success' => $this->options['success_color'],
@@ -102,69 +107,9 @@ class FactChecker {
         }
     }
     
-    public function ajax_test_api() {
-        check_ajax_referer('test_api_nonce', 'nonce');
-        
-        if (!current_user_can('manage_options')) {
-            wp_send_json_error('Insufficient permissions');
-            return;
-        }
-        
-        $api_key = sanitize_text_field($_POST['api_key']);
-        $model = sanitize_text_field($_POST['model']);
-        
-        if (empty($api_key)) {
-            wp_send_json_error('API key is required');
-            return;
-        }
-        
-        try {
-            $response = wp_remote_post('https://openrouter.ai/api/v1/chat/completions', array(
-                'headers' => array(
-                    'Authorization' => 'Bearer ' . $api_key,
-                    'Content-Type' => 'application/json',
-                    'HTTP-Referer' => home_url(),
-                    'X-Title' => get_bloginfo('name')
-                ),
-                'body' => json_encode(array(
-                    'model' => $model,
-                    'messages' => array(
-                        array(
-                            'role' => 'user',
-                            'content' => 'Test connection. Please respond with "Connection successful".'
-                        )
-                    ),
-                    'max_tokens' => 50
-                )),
-                'timeout' => 30
-            ));
-            
-            if (is_wp_error($response)) {
-                wp_send_json_error('Connection failed: ' . $response->get_error_message());
-                return;
-            }
-            
-            $http_code = wp_remote_retrieve_response_code($response);
-            $body = wp_remote_retrieve_body($response);
-            
-            if ($http_code !== 200) {
-                $error_data = json_decode($body, true);
-                $error_message = isset($error_data['error']['message']) ? $error_data['error']['message'] : 'Unknown error';
-                wp_send_json_error('API Error (' . $http_code . '): ' . $error_message);
-                return;
-            }
-            
-            $data = json_decode($body, true);
-            
-            if (!$data || !isset($data['choices'][0]['message']['content'])) {
-                wp_send_json_error('Invalid API response format');
-                return;
-            }
-            
-            wp_send_json_success('Connection successful');
-            
-        } catch (Exception $e) {
-            wp_send_json_error('Test failed: ' . $e->getMessage());
+    public function admin_enqueue_scripts($hook) {
+        if ($hook === 'settings_page_fact-checker') {
+            wp_enqueue_script('jquery');
         }
     }
     
@@ -232,7 +177,14 @@ class FactChecker {
         $post = get_post($post_id);
         
         if (!$post) {
-            wp_die('Post not found');
+            wp_send_json_error('Post not found');
+            return;
+        }
+        
+        // Check if API key is configured
+        if (empty($this->options['api_key'])) {
+            wp_send_json_error('API key not configured. Please check plugin settings.');
+            return;
         }
         
         // Check cache first
@@ -244,7 +196,12 @@ class FactChecker {
         
         // Get article content
         $content = strip_tags($post->post_content);
-        $content = wp_trim_words($content, 500); // Limit for API
+        $content = wp_trim_words($content, 800); // Increased for better analysis
+        
+        if (empty(trim($content))) {
+            wp_send_json_error('No content to analyze');
+            return;
+        }
         
         try {
             $result = $this->analyze_content($content);
@@ -254,7 +211,9 @@ class FactChecker {
             
             wp_send_json_success($result);
         } catch (Exception $e) {
-            wp_send_json_error('Analysis failed: ' . $e->getMessage());
+            // Log the full error for debugging
+            error_log('Fact Checker Error: ' . $e->getMessage());
+            wp_send_json_error($e->getMessage());
         }
     }
     
@@ -262,39 +221,68 @@ class FactChecker {
         $api_key = $this->options['api_key'];
         $model = $this->options['model'];
         $web_searches = intval($this->options['web_searches']);
+        $search_context = $this->options['search_context'];
         
-        // Prepare the prompt
-        $prompt = "You are a fact-checking AI. Analyze the following article content and:
-1. Identify any factual claims that can be verified
-2. Rate the overall accuracy on a scale of 0-100
-3. List any outdated, incorrect, or misleading information
-4. Provide suggestions for improvement
-5. Perform {$web_searches} web searches to verify key facts
+        // Use OpenRouter's online model for web search
+        $online_model = $model . ':online';
+        
+        // Prepare the comprehensive fact-checking prompt
+        $prompt = "You are a professional fact-checker. Analyze the following article content using web search to verify factual claims.
 
-Article content:
+IMPORTANT INSTRUCTIONS:
+1. Use web search to verify key factual claims in the article
+2. Rate overall accuracy on a scale of 0-100
+3. Identify any outdated, incorrect, or misleading information
+4. Provide specific improvement suggestions
+5. Return results in EXACT JSON format (no markdown, no extra text)
+
+Article Content:
 {$content}
 
-Please respond in JSON format with this structure:
+Search and analyze this content thoroughly. Respond ONLY with valid JSON in this exact format:
 {
     \"score\": 85,
     \"status\": \"Mostly Accurate\",
-    \"description\": \"Brief description of findings\",
+    \"description\": \"Brief description of your findings based on web search results\",
     \"issues\": [
         {
             \"type\": \"Outdated Information\",
-            \"description\": \"Description of the issue\",
-            \"suggestion\": \"Suggested correction\"
+            \"description\": \"Specific description of what's wrong\",
+            \"suggestion\": \"Specific suggestion for correction\"
         }
     ],
     \"sources\": [
         {
-            \"title\": \"Source title\",
-            \"url\": \"https://example.com\"
+            \"title\": \"Actual source title from web search\",
+            \"url\": \"https://actual-source-url.com\"
         }
     ]
-}";
+}
+
+Focus on factual accuracy and provide real sources from your web search results.";
         
-        // Make API call to OpenRouter
+        // Prepare API request body with web search options
+        $api_body = array(
+            'model' => $online_model,
+            'messages' => array(
+                array(
+                    'role' => 'user',
+                    'content' => $prompt
+                )
+            ),
+            'max_tokens' => 2500,
+            'temperature' => 0.3,
+            'web_search_options' => array(
+                'max_results' => $web_searches,
+                'search_context_size' => $search_context
+            )
+        );
+        
+        // Log the request for debugging
+        error_log('Fact Checker API Request - Model: ' . $online_model);
+        error_log('Fact Checker API Request - Web searches: ' . $web_searches);
+        error_log('Fact Checker API Request - Search context: ' . $search_context);
+        
         $response = wp_remote_post('https://openrouter.ai/api/v1/chat/completions', array(
             'headers' => array(
                 'Authorization' => 'Bearer ' . $api_key,
@@ -302,36 +290,102 @@ Please respond in JSON format with this structure:
                 'HTTP-Referer' => home_url(),
                 'X-Title' => get_bloginfo('name')
             ),
-            'body' => json_encode(array(
-                'model' => $model,
-                'messages' => array(
-                    array(
-                        'role' => 'user',
-                        'content' => $prompt
-                    )
-                )
-            )),
-            'timeout' => 60
+            'body' => json_encode($api_body),
+            'timeout' => 120 // Extended timeout for web search
         ));
         
         if (is_wp_error($response)) {
             throw new Exception('API request failed: ' . $response->get_error_message());
         }
         
+        $http_code = wp_remote_retrieve_response_code($response);
         $body = wp_remote_retrieve_body($response);
+        
+        // Log the raw response for debugging
+        error_log('OpenRouter Response Code: ' . $http_code);
+        error_log('OpenRouter Response Body: ' . substr($body, 0, 1000) . '...');
+        
+        if ($http_code !== 200) {
+            $error_data = json_decode($body, true);
+            $error_message = isset($error_data['error']['message']) ? $error_data['error']['message'] : 'API request failed';
+            throw new Exception('API Error (' . $http_code . '): ' . $error_message);
+        }
+        
         $data = json_decode($body, true);
         
         if (!$data || !isset($data['choices'][0]['message']['content'])) {
-            throw new Exception('Invalid API response');
+            throw new Exception('Invalid API response structure');
         }
         
-        $result = json_decode($data['choices'][0]['message']['content'], true);
+        $ai_content = trim($data['choices'][0]['message']['content']);
         
-        if (!$result) {
-            throw new Exception('Failed to parse AI response');
+        // Clean up the AI response - remove markdown code blocks if present
+        $ai_content = preg_replace('/^```json\s*/', '', $ai_content);
+        $ai_content = preg_replace('/\s*```$/', '', $ai_content);
+        $ai_content = trim($ai_content);
+        
+        // Log the cleaned AI response for debugging
+        error_log('Cleaned AI Response: ' . $ai_content);
+        
+        $result = json_decode($ai_content, true);
+        
+        if (!$result || !is_array($result)) {
+            // Fallback: create a basic response structure
+            error_log('Failed to parse AI response: ' . $ai_content);
+            return array(
+                'score' => 50,
+                'status' => 'Analysis Incomplete',
+                'description' => 'Web search completed but response parsing failed. Please try again.',
+                'issues' => array(),
+                'sources' => $this->extract_sources_from_response($body)
+            );
+        }
+        
+        // Ensure required fields exist
+        $result = array_merge(array(
+            'score' => 0,
+            'status' => 'Unknown',
+            'description' => 'No description provided',
+            'issues' => array(),
+            'sources' => array()
+        ), $result);
+        
+        // Validate score is numeric
+        $result['score'] = intval($result['score']);
+        if ($result['score'] < 0) $result['score'] = 0;
+        if ($result['score'] > 100) $result['score'] = 100;
+        
+        // If no sources in result, try to extract from response annotations
+        if (empty($result['sources'])) {
+            $result['sources'] = $this->extract_sources_from_response($body);
         }
         
         return $result;
+    }
+    
+    private function extract_sources_from_response($response_body) {
+        $sources = array();
+        $data = json_decode($response_body, true);
+        
+        // Try to extract sources from OpenRouter's web search annotations
+        if (isset($data['choices'][0]['message']['annotations'])) {
+            foreach ($data['choices'][0]['message']['annotations'] as $annotation) {
+                if (isset($annotation['type']) && $annotation['type'] === 'web_search') {
+                    if (isset($annotation['web_search']['results'])) {
+                        foreach ($annotation['web_search']['results'] as $result) {
+                            if (isset($result['title']) && isset($result['url'])) {
+                                $sources[] = array(
+                                    'title' => $result['title'],
+                                    'url' => $result['url']
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        return array_slice($sources, 0, 8); // Limit to 8 sources
     }
     
     private function get_cached_result($post_id, $content) {
@@ -367,6 +421,78 @@ Please respond in JSON format with this structure:
         );
     }
     
+    public function ajax_test_api() {
+        check_ajax_referer('test_api_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Insufficient permissions');
+            return;
+        }
+        
+        $api_key = sanitize_text_field($_POST['api_key']);
+        $model = sanitize_text_field($_POST['model']);
+        
+        if (empty($api_key)) {
+            wp_send_json_error('API key is required');
+            return;
+        }
+        
+        try {
+            // Test with online model
+            $online_model = $model . ':online';
+            
+            $response = wp_remote_post('https://openrouter.ai/api/v1/chat/completions', array(
+                'headers' => array(
+                    'Authorization' => 'Bearer ' . $api_key,
+                    'Content-Type' => 'application/json',
+                    'HTTP-Referer' => home_url(),
+                    'X-Title' => get_bloginfo('name')
+                ),
+                'body' => json_encode(array(
+                    'model' => $online_model,
+                    'messages' => array(
+                        array(
+                            'role' => 'user',
+                            'content' => 'Search the web for "OpenRouter web search feature" and confirm it works. Respond with: Connection and web search successful.'
+                        )
+                    ),
+                    'max_tokens' => 100,
+                    'web_search_options' => array(
+                        'max_results' => 3
+                    )
+                )),
+                'timeout' => 60
+            ));
+            
+            if (is_wp_error($response)) {
+                wp_send_json_error('Connection failed: ' . $response->get_error_message());
+                return;
+            }
+            
+            $http_code = wp_remote_retrieve_response_code($response);
+            $body = wp_remote_retrieve_body($response);
+            
+            if ($http_code !== 200) {
+                $error_data = json_decode($body, true);
+                $error_message = isset($error_data['error']['message']) ? $error_data['error']['message'] : 'Unknown error';
+                wp_send_json_error('API Error (' . $http_code . '): ' . $error_message);
+                return;
+            }
+            
+            $data = json_decode($body, true);
+            
+            if (!$data || !isset($data['choices'][0]['message']['content'])) {
+                wp_send_json_error('Invalid API response format');
+                return;
+            }
+            
+            wp_send_json_success('API and web search connection successful! Model: ' . $online_model);
+            
+        } catch (Exception $e) {
+            wp_send_json_error('Test failed: ' . $e->getMessage());
+        }
+    }
+    
     public function add_admin_menu() {
         add_options_page(
             'Fact Checker Settings',
@@ -392,6 +518,8 @@ Please respond in JSON format with this structure:
             'api_key' => 'OpenRouter API Key',
             'model' => 'OpenRouter Model',
             'web_searches' => 'Number of Web Searches',
+            'search_context' => 'Search Context Size',
+            'theme_mode' => 'Theme Mode',
             'primary_color' => 'Primary Color',
             'success_color' => 'Success Color',
             'warning_color' => 'Warning Color',
@@ -410,7 +538,7 @@ Please respond in JSON format with this structure:
     }
     
     public function settings_section_callback() {
-        echo '<p>Configure your Fact Checker plugin settings below.</p>';
+        echo '<p>Configure your Fact Checker plugin settings below. This plugin uses OpenRouter\'s web search feature to verify factual claims.</p>';
     }
     
     public function enabled_render() {
@@ -423,16 +551,19 @@ Please respond in JSON format with this structure:
     public function api_key_render() {
         ?>
         <input type='password' name='fact_checker_options[api_key]' value='<?php echo esc_attr($this->options['api_key']); ?>' style="width: 400px;">
-        <p class="description">Your OpenRouter API key. Get one at <a href="https://openrouter.ai" target="_blank">openrouter.ai</a></p>
+        <button type="button" id="test-api-connection" class="button">Test Connection</button>
+        <p class="description">Your OpenRouter API key with web search access. Get one at <a href="https://openrouter.ai" target="_blank">openrouter.ai</a></p>
+        <div id="api-test-result"></div>
         <?php
     }
     
     public function model_render() {
         $models = array(
+            'openai/gpt-4o' => 'GPT-4o (Recommended)',
             'openai/gpt-4' => 'GPT-4',
             'openai/gpt-3.5-turbo' => 'GPT-3.5 Turbo',
-            'anthropic/claude-3-haiku' => 'Claude 3 Haiku',
             'anthropic/claude-3-sonnet' => 'Claude 3 Sonnet',
+            'anthropic/claude-3-haiku' => 'Claude 3 Haiku',
             'google/gemini-pro' => 'Gemini Pro'
         );
         ?>
@@ -441,7 +572,7 @@ Please respond in JSON format with this structure:
                 <option value='<?php echo $value; ?>' <?php selected($this->options['model'], $value); ?>><?php echo $label; ?></option>
             <?php endforeach; ?>
         </select>
-        <p class="description">Choose which AI model to use for fact-checking</p>
+        <p class="description">AI model for fact-checking (will use :online version for web search)</p>
         <?php
     }
     
@@ -453,7 +584,38 @@ Please respond in JSON format with this structure:
                 <option value='<?php echo $num; ?>' <?php selected($this->options['web_searches'], $num); ?>><?php echo $num; ?> searches</option>
             <?php endforeach; ?>
         </select>
-        <p class="description">Number of web searches the AI should perform for verification</p>
+        <p class="description">Maximum web search results to retrieve (affects cost: $4 per 1000 results)</p>
+        <?php
+    }
+    
+    public function search_context_render() {
+        $contexts = array(
+            'low' => 'Low - Basic queries',
+            'medium' => 'Medium - General queries (Recommended)',
+            'high' => 'High - Detailed research'
+        );
+        ?>
+        <select name='fact_checker_options[search_context]'>
+            <?php foreach ($contexts as $value => $label): ?>
+                <option value='<?php echo $value; ?>' <?php selected($this->options['search_context'], $value); ?>><?php echo $label; ?></option>
+            <?php endforeach; ?>
+        </select>
+        <p class="description">Search context size - higher means more thorough but more expensive</p>
+        <?php
+    }
+    
+    public function theme_mode_render() {
+        $modes = array(
+            'light' => 'Light Mode',
+            'dark' => 'Dark Mode'
+        );
+        ?>
+        <select name='fact_checker_options[theme_mode]'>
+            <?php foreach ($modes as $value => $label): ?>
+                <option value='<?php echo $value; ?>' <?php selected($this->options['theme_mode'], $value); ?>><?php echo $label; ?></option>
+            <?php endforeach; ?>
+        </select>
+        <p class="description">Choose between light and dark theme for the fact checker</p>
         <?php
     }
     
@@ -496,7 +658,61 @@ Please respond in JSON format with this structure:
                 submit_button();
                 ?>
             </form>
+            
+            <div style="margin-top: 30px; padding: 20px; background: #f9f9f9; border-radius: 8px;">
+                <h2>About OpenRouter Web Search</h2>
+                <p>This plugin uses OpenRouter's built-in web search feature to verify factual claims. The web search is powered by Exa.ai and provides real-time access to current information.</p>
+                <ul>
+                    <li><strong>Cost:</strong> $4 per 1000 search results (with 5 searches = ~$0.02 per fact check)</li>
+                    <li><strong>Real Sources:</strong> All sources come from actual web search results</li>
+                    <li><strong>Current Info:</strong> Always uses the latest available information</li>
+                    <li><strong>Caching:</strong> Results cached for 24 hours to minimize costs</li>
+                </ul>
+            </div>
         </div>
+        
+        <script>
+        jQuery(document).ready(function($) {
+            $('#test-api-connection').on('click', function() {
+                var button = $(this);
+                var apiKey = $('input[name="fact_checker_options[api_key]"]').val();
+                var model = $('select[name="fact_checker_options[model]"]').val();
+                var resultDiv = $('#api-test-result');
+                
+                if (!apiKey) {
+                    resultDiv.html('<div style="color: red; margin-top: 10px;">Please enter an API key first.</div>');
+                    return;
+                }
+                
+                button.prop('disabled', true).text('Testing...');
+                resultDiv.html('<div style="color: #666; margin-top: 10px;">Testing API and web search connection...</div>');
+                
+                $.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: {
+                        action: 'test_fact_checker_api',
+                        api_key: apiKey,
+                        model: model,
+                        nonce: '<?php echo wp_create_nonce('test_api_nonce'); ?>'
+                    },
+                    success: function(response) {
+                        if (response.success) {
+                            resultDiv.html('<div style="color: green; margin-top: 10px;">✓ ' + response.data + '</div>');
+                        } else {
+                            resultDiv.html('<div style="color: red; margin-top: 10px;">✗ ' + response.data + '</div>');
+                        }
+                    },
+                    error: function() {
+                        resultDiv.html('<div style="color: red; margin-top: 10px;">✗ Test failed - please try again.</div>');
+                    },
+                    complete: function() {
+                        button.prop('disabled', false).text('Test Connection');
+                    }
+                });
+            });
+        });
+        </script>
         
         <style>
             .wrap {
@@ -516,6 +732,22 @@ Please respond in JSON format with this structure:
                 padding: 8px 12px;
                 border: 1px solid #ddd;
                 border-radius: 4px;
+            }
+            #test-api-connection {
+                background: #0073aa;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+                cursor: pointer;
+                margin-left: 10px;
+            }
+            #test-api-connection:hover:not(:disabled) {
+                background: #005a87;
+            }
+            #test-api-connection:disabled {
+                background: #ccc;
+                cursor: not-allowed;
             }
         </style>
         <?php
