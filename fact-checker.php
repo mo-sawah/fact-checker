@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Fact Checker
  * Description: AI-powered fact-checking plugin that verifies article accuracy using OpenRouter and web searches
- * Version: 1.0.0
+ * Version: 1.0.1
  * Author: Mohamed Sawah
  * Author URI: https://sawahsolutions.com
  * License: GPL v2 or later
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('FACT_CHECKER_VERSION', '1.0.0');
+define('FACT_CHECKER_VERSION', '1.0.1');
 define('FACT_CHECKER_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('FACT_CHECKER_PLUGIN_PATH', plugin_dir_path(__FILE__));
 
@@ -99,6 +99,72 @@ class FactChecker {
                     'background' => $this->options['background_color']
                 )
             ));
+        }
+    }
+    
+    public function ajax_test_api() {
+        check_ajax_referer('test_api_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Insufficient permissions');
+            return;
+        }
+        
+        $api_key = sanitize_text_field($_POST['api_key']);
+        $model = sanitize_text_field($_POST['model']);
+        
+        if (empty($api_key)) {
+            wp_send_json_error('API key is required');
+            return;
+        }
+        
+        try {
+            $response = wp_remote_post('https://openrouter.ai/api/v1/chat/completions', array(
+                'headers' => array(
+                    'Authorization' => 'Bearer ' . $api_key,
+                    'Content-Type' => 'application/json',
+                    'HTTP-Referer' => home_url(),
+                    'X-Title' => get_bloginfo('name')
+                ),
+                'body' => json_encode(array(
+                    'model' => $model,
+                    'messages' => array(
+                        array(
+                            'role' => 'user',
+                            'content' => 'Test connection. Please respond with "Connection successful".'
+                        )
+                    ),
+                    'max_tokens' => 50
+                )),
+                'timeout' => 30
+            ));
+            
+            if (is_wp_error($response)) {
+                wp_send_json_error('Connection failed: ' . $response->get_error_message());
+                return;
+            }
+            
+            $http_code = wp_remote_retrieve_response_code($response);
+            $body = wp_remote_retrieve_body($response);
+            
+            if ($http_code !== 200) {
+                $error_data = json_decode($body, true);
+                $error_message = isset($error_data['error']['message']) ? $error_data['error']['message'] : 'Unknown error';
+                wp_send_json_error('API Error (' . $http_code . '): ' . $error_message);
+                return;
+            }
+            
+            $data = json_decode($body, true);
+            
+            if (!$data || !isset($data['choices'][0]['message']['content'])) {
+                wp_send_json_error('Invalid API response format');
+                return;
+            }
+            
+            wp_send_json_success('Connection successful');
+            
+        } catch (Exception $e) {
+            wp_send_json_error('Test failed: ' . $e->getMessage());
         }
     }
     
